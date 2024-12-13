@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -16,7 +15,7 @@ const (
 	port     = 5432
 	user     = "postgres"
 	password = "300705"
-	dbname   = "sandbox"
+	dbname   = "query"
 )
 
 type Handlers struct {
@@ -28,29 +27,34 @@ type DatabaseProvider struct {
 }
 
 // Обработчики HTTP-запросов
-func (h *Handlers) GetHello(w http.ResponseWriter, r *http.Request) {
-	msg, err := h.dbProvider.SelectHello()
+func (h *Handlers) GreetGet(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		fmt.Fprint(w, "Hello, stranger!")
+		return
+	}
+	msg, err := h.dbProvider.SelectHello(name)
+	if !msg {
+		fmt.Fprintf(w, "Such user does not exist!")
+		return
+	}
+
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(msg))
+	w.Write([]byte("Hello, " + name + "!"))
 }
-func (h *Handlers) PostHello(w http.ResponseWriter, r *http.Request) {
-	input := struct {
-		Msg string `json:"msg"`
-	}{}
-
-	decoder := json.NewDecoder(r.Body)
-	err := decoder.Decode(&input)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(err.Error()))
+func (h *Handlers) GreetPost(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		fmt.Fprint(w, "Hello, stranger!")
+		return
 	}
 
-	err = h.dbProvider.InsertHello(input.Msg)
+	err := h.dbProvider.InsertHello(name)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
@@ -60,20 +64,18 @@ func (h *Handlers) PostHello(w http.ResponseWriter, r *http.Request) {
 }
 
 // Методы для работы с базой данных
-func (dp *DatabaseProvider) SelectHello() (string, error) {
-	var msg string
-
-	// Получаем одно сообщение из таблицы hello, отсортированной в случайном порядке
-	row := dp.db.QueryRow("SELECT message FROM hello ORDER BY RANDOM() LIMIT 1")
-	err := row.Scan(&msg)
+func (dp *DatabaseProvider) SelectHello(name string) (bool, error) {
+	var exists string
+	query := `SELECT name_user FROM usernames WHERE name_user = ($1)`
+	err := dp.db.QueryRow(query, name).Scan(&exists)
 	if err != nil {
-		return "", err
+		return false, err
 	}
-
-	return msg, nil
+	fmt.Println("In exists: ", exists)
+	return true, nil
 }
 func (dp *DatabaseProvider) InsertHello(msg string) error {
-	_, err := dp.db.Exec("INSERT INTO hello (message) VALUES ($1)", msg)
+	_, err := dp.db.Exec("INSERT INTO usernames (name_user) VALUES ($1)", msg)
 	if err != nil {
 		return err
 	}
@@ -104,11 +106,10 @@ func main() {
 	h := Handlers{dbProvider: dp}
 
 	// Регистрируем обработчики
-	http.HandleFunc("/get", h.GetHello)
-	http.HandleFunc("/post", h.PostHello)
+	http.HandleFunc("/api/user/get", h.GreetGet)
+	http.HandleFunc("/api/user/post", h.GreetPost)
 
 	// Запускаем веб-сервер на указанном адресе
-	fmt.Println("Starting server on: 127.0.0.1:8081")
 	err = http.ListenAndServe(*address, nil)
 	if err != nil {
 		log.Fatal(err)
